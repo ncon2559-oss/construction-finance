@@ -21,10 +21,7 @@ conn.commit()
 # ----------------------
 # PAGE CONFIG
 # ----------------------
-st.set_page_config(
-    page_title="ระบบการเงินบริษัทก่อสร้าง",
-    layout="wide"
-)
+st.set_page_config(page_title="ระบบการเงินบริษัทก่อสร้าง", layout="wide")
 
 # ----------------------
 # LOGIN
@@ -54,7 +51,7 @@ if not st.session_state.login:
 st.sidebar.title("📁 เมนูระบบ")
 menu = st.sidebar.radio(
     "เลือกเมนู",
-    ["Dashboard", "บันทึกรับเงิน", "รายการย้อนหลัง"]
+    ["Dashboard", "บันทึกรับเงิน", "รายการย้อนหลัง / แก้ไข"]
 )
 
 st.sidebar.divider()
@@ -64,7 +61,7 @@ if st.sidebar.button("ออกจากระบบ"):
     st.rerun()
 
 # ----------------------
-# DATA
+# DATA SUMMARY
 # ----------------------
 CONTRACT_VALUE = 3_900_000
 c.execute("SELECT SUM(amount) FROM income")
@@ -83,8 +80,7 @@ if menu == "Dashboard":
     col2.metric("รับเงินแล้ว", f"{received:,.0f} บาท")
     col3.metric("คงเหลือ", f"{CONTRACT_VALUE - received:,.0f} บาท")
 
-    st.subheader("โครงการ")
-    st.write("• Water Tank & Fire Pump")
+    st.write("โครงการ: Water Tank & Fire Pump")
 
 # ----------------------
 # ADD INCOME
@@ -93,7 +89,7 @@ elif menu == "บันทึกรับเงิน":
     st.title("➕ บันทึกรับเงินงวดงาน")
 
     phase = st.text_input("งวดงาน (เช่น งวดที่ 1)")
-    percent = st.number_input("เปอร์เซ็นต์ผลงาน", min_value=0, max_value=100)
+    percent = st.number_input("เปอร์เซ็นต์ผลงาน", 0, 100)
     amount = st.number_input("จำนวนเงิน (บาท)", step=1000)
 
     if st.button("บันทึกข้อมูล"):
@@ -109,13 +105,40 @@ elif menu == "บันทึกรับเงิน":
             st.warning("กรุณากรอกข้อมูลงวดและจำนวนเงิน")
 
 # ----------------------
-# HISTORY
+# HISTORY + EDIT
 # ----------------------
-elif menu == "รายการย้อนหลัง":
+elif menu == "รายการย้อนหลัง / แก้ไข":
     st.title("📋 รายการรับเงินย้อนหลัง")
 
-    df = pd.read_sql_query(
-        "SELECT phase AS งวด, percent AS เปอร์เซ็นต์, amount AS จำนวนเงิน FROM income",
-        conn
-    )
+    df = pd.read_sql_query("SELECT * FROM income", conn)
     st.dataframe(df, use_container_width=True)
+
+    st.divider()
+    st.subheader("✏️ แก้ไขรายการ")
+
+    if len(df) > 0:
+        edit_id = st.selectbox(
+            "เลือกรายการ (id)",
+            df["id"]
+        )
+
+        row = df[df["id"] == edit_id].iloc[0]
+
+        new_phase = st.text_input("งวดงาน", row["phase"])
+        new_percent = st.number_input("เปอร์เซ็นต์", 0, 100, int(row["percent"]))
+        new_amount = st.number_input("จำนวนเงิน", step=1000, value=int(row["amount"]))
+
+        if st.button("บันทึกการแก้ไข"):
+            c.execute(
+                """
+                UPDATE income
+                SET phase = ?, percent = ?, amount = ?
+                WHERE id = ?
+                """,
+                (new_phase, new_percent, new_amount, edit_id)
+            )
+            conn.commit()
+            st.success("แก้ไขข้อมูลเรียบร้อย ✅")
+            st.rerun()
+    else:
+        st.info("ยังไม่มีข้อมูลให้แก้ไข")
