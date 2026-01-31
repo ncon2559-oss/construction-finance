@@ -8,15 +8,44 @@ import pandas as pd
 conn = sqlite3.connect("finance.db", check_same_thread=False)
 c = conn.cursor()
 
+# Project table
+c.execute("""
+CREATE TABLE IF NOT EXISTS project (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT,
+    contract_value INTEGER
+)
+""")
+
+# Income table (ผูกกับ project)
 c.execute("""
 CREATE TABLE IF NOT EXISTS income (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER,
     phase TEXT,
     percent INTEGER,
     amount INTEGER
 )
 """)
 conn.commit()
+
+# ----------------------
+# INIT DEFAULT PROJECT (ถ้ายังไม่มี)
+# ----------------------
+c.execute("SELECT COUNT(*) FROM project")
+if c.fetchone()[0] == 0:
+    c.execute(
+        "INSERT INTO project (name, contract_value) VALUES (?, ?)",
+        ("Water Tank & Fire Pump", 3_900_000)
+    )
+    conn.commit()
+
+# ดึง project ปัจจุบัน (วันนี้มีแค่อันเดียว)
+c.execute("SELECT id, name, contract_value FROM project LIMIT 1")
+project = c.fetchone()
+PROJECT_ID = project[0]
+PROJECT_NAME = project[1]
+CONTRACT_VALUE = project[2]
 
 # ----------------------
 # PAGE CONFIG
@@ -55,16 +84,20 @@ menu = st.sidebar.radio(
 )
 
 st.sidebar.divider()
+st.sidebar.write(f"📌 โครงการ: {PROJECT_NAME}")
 st.sidebar.write("👤 ผู้ใช้: ncon2559")
+
 if st.sidebar.button("ออกจากระบบ"):
     st.session_state.login = False
     st.rerun()
 
 # ----------------------
-# DATA SUMMARY
+# SUMMARY
 # ----------------------
-CONTRACT_VALUE = 3_900_000
-c.execute("SELECT SUM(amount) FROM income")
+c.execute(
+    "SELECT SUM(amount) FROM income WHERE project_id = ?",
+    (PROJECT_ID,)
+)
 received = c.fetchone()[0]
 received = received if received else 0
 
@@ -80,7 +113,7 @@ if menu == "Dashboard":
     col2.metric("รับเงินแล้ว", f"{received:,.0f} บาท")
     col3.metric("คงเหลือ", f"{CONTRACT_VALUE - received:,.0f} บาท")
 
-    st.write("โครงการ: Water Tank & Fire Pump")
+    st.write(f"โครงการ: **{PROJECT_NAME}**")
 
 # ----------------------
 # ADD INCOME
@@ -95,8 +128,11 @@ elif menu == "บันทึกรับเงิน":
     if st.button("บันทึกข้อมูล"):
         if phase and amount > 0:
             c.execute(
-                "INSERT INTO income (phase, percent, amount) VALUES (?, ?, ?)",
-                (phase, percent, amount)
+                """
+                INSERT INTO income (project_id, phase, percent, amount)
+                VALUES (?, ?, ?, ?)
+                """,
+                (PROJECT_ID, phase, percent, amount)
             )
             conn.commit()
             st.success("บันทึกข้อมูลเรียบร้อย ✅")
@@ -110,18 +146,18 @@ elif menu == "บันทึกรับเงิน":
 elif menu == "รายการย้อนหลัง / แก้ไข":
     st.title("📋 รายการรับเงินย้อนหลัง")
 
-    df = pd.read_sql_query("SELECT * FROM income", conn)
+    df = pd.read_sql_query(
+        "SELECT id, phase, percent, amount FROM income WHERE project_id = ?",
+        conn,
+        params=(PROJECT_ID,)
+    )
     st.dataframe(df, use_container_width=True)
 
     st.divider()
     st.subheader("✏️ แก้ไขรายการ")
 
     if len(df) > 0:
-        edit_id = st.selectbox(
-            "เลือกรายการ (id)",
-            df["id"]
-        )
-
+        edit_id = st.selectbox("เลือกรายการ (id)", df["id"])
         row = df[df["id"] == edit_id].iloc[0]
 
         new_phase = st.text_input("งวดงาน", row["phase"])
@@ -141,4 +177,4 @@ elif menu == "รายการย้อนหลัง / แก้ไข":
             st.success("แก้ไขข้อมูลเรียบร้อย ✅")
             st.rerun()
     else:
-        st.info("ยังไม่มีข้อมูลให้แก้ไข")
+        st.info("ยังไม่มีข้อมูล")
