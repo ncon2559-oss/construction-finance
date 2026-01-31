@@ -267,23 +267,39 @@ elif menu == "Labor":
 
     # ===== SUMMARY (แก้บั๊กแล้ว) =====
     summary = pd.read_sql("""
-        SELECT 
-            e.name,
-            COUNT(a.id) AS days,
-            IFNULL(SUM(e.daily_salary),0) AS salary,
-            IFNULL(SUM(a.late_minutes),0) AS late,
-            IFNULL(SUM(a.ot_minutes),0) AS ot
-        FROM employee e
-        LEFT JOIN attendance a 
-            ON e.id = a.emp_id
-        WHERE e.project_id = ?
-        GROUP BY e.id, e.name
-    """, conn, params=(PID,))
-
+    SELECT 
+        e.id,
+        e.name,
+        e.daily_salary,
+        COUNT(a.id) AS days,
+        IFNULL(SUM(a.late_minutes),0) AS late,
+        IFNULL(SUM(a.ot_minutes),0) AS ot
+    FROM employee e
+    LEFT JOIN attendance a 
+        ON e.id = a.emp_id
+    WHERE e.project_id = ?
+    GROUP BY e.id, e.name, e.daily_salary
+""", conn, params=(PID,))
+))
+    summary["ค่าแรงพื้นฐาน"] = summary["days"] * summary["daily_salary"]
     summary["หักสาย"] = summary["late"] * 1
-    summary["ค่าแรงสุทธิ"] = summary["salary"] - summary["หักสาย"]
+    summary["ค่าแรงสุทธิ"] = summary["ค่าแรงพื้นฐาน"] - summary["หักสาย"]
 
-    st.dataframe(summary, use_container_width=True)
+    
+    st.dataframe(
+    summary[[
+        "name",
+        "days",
+        "daily_salary",
+        "ค่าแรงพื้นฐาน",
+        "late",
+        "หักสาย",
+        "ot",
+        "ค่าแรงสุทธิ"
+    ]],
+    use_container_width=True
+)
+
 
 # ======================
 # DOCUMENTS
