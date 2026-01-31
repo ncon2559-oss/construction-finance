@@ -100,7 +100,7 @@ if not st.session_state.login:
     st.stop()
 
 # ======================
-# PROJECT SELECT
+# PROJECT
 # ======================
 st.sidebar.header("📁 โครงการ")
 
@@ -138,14 +138,14 @@ if menu == "Dashboard":
     st.title("📊 Dashboard")
 
     inc = pd.read_sql(
-        "SELECT SUM(amount) t FROM income WHERE project_id=? AND status='รับเงินแล้ว'",
+        "SELECT IFNULL(SUM(amount),0) t FROM income WHERE project_id=? AND status='รับเงินแล้ว'",
         conn, params=(PID,)
-    )["t"].iloc[0] or 0
+    )["t"].iloc[0]
 
     exp = pd.read_sql(
-        "SELECT SUM(amount) t FROM expense WHERE project_id=?",
+        "SELECT IFNULL(SUM(amount),0) t FROM expense WHERE project_id=?",
         conn, params=(PID,)
-    )["t"].iloc[0] or 0
+    )["t"].iloc[0]
 
     col1,col2,col3,col4 = st.columns(4)
     col1.metric("มูลค่าสัญญา", f"{CONTRACT:,.0f}")
@@ -208,9 +208,10 @@ elif menu == "Expense":
 # LABOR / ATTENDANCE
 # ======================
 elif menu == "Labor":
-    st.title("👷 ค่าแรงคนงาน")
+    st.title("👷 ค่าแรงจาก Attendance")
 
-    file = st.file_uploader("Import Attendance Excel", type=["xlsx"])
+    file = st.file_uploader("Upload Excel เครื่องสแกนนิ้ว", type=["xlsx"])
+
     if file:
         df = pd.read_excel(file, header=None)
 
@@ -229,7 +230,7 @@ elif menu == "Labor":
             conn, params=(emp_code,PID)
         ).iloc[0]["id"]
 
-        start = df[df.iloc[:,0]=="Date"].index[0]+1
+        start = df[df.iloc[:,0]=="Date"].index[0] + 1
 
         for i in range(start, len(df)):
             d = df.iloc[i,0]
@@ -242,11 +243,16 @@ elif menu == "Labor":
             tin = datetime.strptime(str(tin), "%H:%M").time()
             tout = datetime.strptime(str(tout), "%H:%M").time()
 
-            late = max(0, (datetime.combine(date.today(), tin) -
-                            datetime.combine(date.today(), time(8,0))).seconds//60)
+            late = max(
+                0,
+                int((datetime.combine(date.today(), tin) -
+                     datetime.combine(date.today(), time(8,0))).seconds / 60)
+            )
 
-            work = (datetime.combine(date.today(), tout) -
-                    datetime.combine(date.today(), tin)).seconds//60
+            work = int(
+                (datetime.combine(date.today(), tout) -
+                 datetime.combine(date.today(), tin)).seconds / 60
+            )
 
             ot = max(0, work - 540)
 
@@ -259,16 +265,19 @@ elif menu == "Labor":
         conn.commit()
         st.success("Import สำเร็จ")
 
+    # ===== SUMMARY (แก้บั๊กแล้ว) =====
     summary = pd.read_sql("""
-        SELECT e.name,
-               COUNT(a.id) days,
-               SUM(e.daily_salary) salary,
-               SUM(a.late_minutes) late,
-               SUM(a.ot_minutes) ot
+        SELECT 
+            e.name,
+            COUNT(a.id) AS days,
+            IFNULL(SUM(e.daily_salary),0) AS salary,
+            IFNULL(SUM(a.late_minutes),0) AS late,
+            IFNULL(SUM(a.ot_minutes),0) AS ot
         FROM employee e
-        LEFT JOIN attendance a ON e.id=a.emp_id
-        WHERE e.project_id=?
-        GROUP BY e.id
+        LEFT JOIN attendance a 
+            ON e.id = a.emp_id
+        WHERE e.project_id = ?
+        GROUP BY e.id, e.name
     """, conn, params=(PID,))
 
     summary["หักสาย"] = summary["late"] * 1
