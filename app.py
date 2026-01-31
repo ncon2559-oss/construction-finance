@@ -21,7 +21,10 @@ conn.commit()
 # ----------------------
 # PAGE CONFIG
 # ----------------------
-st.set_page_config(page_title="ระบบการเงินบริษัทก่อสร้าง", layout="wide")
+st.set_page_config(
+    page_title="ระบบการเงินบริษัทก่อสร้าง",
+    layout="wide"
+)
 
 # ----------------------
 # LOGIN
@@ -30,7 +33,7 @@ if "login" not in st.session_state:
     st.session_state.login = False
 
 def login_page():
-    st.title("เข้าสู่ระบบ")
+    st.title("🔐 เข้าสู่ระบบ")
     user = st.text_input("Username")
     pw = st.text_input("Password", type="password")
 
@@ -46,50 +49,73 @@ if not st.session_state.login:
     st.stop()
 
 # ----------------------
-# DASHBOARD
+# SIDEBAR
 # ----------------------
-st.title("📊 ระบบการเงินโครงการก่อสร้าง")
-st.subheader("โครงการ: Water Tank & Fire Pump")
+st.sidebar.title("📁 เมนูระบบ")
+menu = st.sidebar.radio(
+    "เลือกเมนู",
+    ["Dashboard", "บันทึกรับเงิน", "รายการย้อนหลัง"]
+)
 
+st.sidebar.divider()
+st.sidebar.write("👤 ผู้ใช้: ncon2559")
+if st.sidebar.button("ออกจากระบบ"):
+    st.session_state.login = False
+    st.rerun()
+
+# ----------------------
+# DATA
+# ----------------------
 CONTRACT_VALUE = 3_900_000
-
 c.execute("SELECT SUM(amount) FROM income")
 received = c.fetchone()[0]
 received = received if received else 0
 
-col1, col2, col3 = st.columns(3)
-col1.metric("มูลค่าสัญญา", f"{CONTRACT_VALUE:,.0f} บาท")
-col2.metric("รับเงินแล้ว", f"{received:,.0f} บาท")
-col3.metric("คงเหลือ", f"{CONTRACT_VALUE - received:,.0f} บาท")
+# ----------------------
+# DASHBOARD
+# ----------------------
+if menu == "Dashboard":
+    st.title("📊 Dashboard การเงิน")
+    st.success("เข้าสู่ระบบสำเร็จ ✅")
 
-st.divider()
+    col1, col2, col3 = st.columns(3)
+    col1.metric("มูลค่าสัญญา", f"{CONTRACT_VALUE:,.0f} บาท")
+    col2.metric("รับเงินแล้ว", f"{received:,.0f} บาท")
+    col3.metric("คงเหลือ", f"{CONTRACT_VALUE - received:,.0f} บาท")
+
+    st.subheader("โครงการ")
+    st.write("• Water Tank & Fire Pump")
 
 # ----------------------
-# INPUT INCOME
+# ADD INCOME
 # ----------------------
-st.subheader("➕ บันทึกรับเงินงวดงาน")
+elif menu == "บันทึกรับเงิน":
+    st.title("➕ บันทึกรับเงินงวดงาน")
 
-phase = st.text_input("งวดงาน (เช่น งวดที่ 1)")
-percent = st.number_input("เปอร์เซ็นต์ผลงาน", min_value=0, max_value=100)
-amount = st.number_input("จำนวนเงิน (บาท)", step=1000)
+    phase = st.text_input("งวดงาน (เช่น งวดที่ 1)")
+    percent = st.number_input("เปอร์เซ็นต์ผลงาน", min_value=0, max_value=100)
+    amount = st.number_input("จำนวนเงิน (บาท)", step=1000)
 
-if st.button("บันทึกข้อมูล"):
-    if phase and amount > 0:
-        c.execute(
-            "INSERT INTO income (phase, percent, amount) VALUES (?, ?, ?)",
-            (phase, percent, amount)
-        )
-        conn.commit()
-        st.success("บันทึกข้อมูลเรียบร้อย ✅")
-        st.rerun()
-    else:
-        st.warning("กรุณากรอกข้อมูลงวดและจำนวนเงิน")
-
-st.divider()
+    if st.button("บันทึกข้อมูล"):
+        if phase and amount > 0:
+            c.execute(
+                "INSERT INTO income (phase, percent, amount) VALUES (?, ?, ?)",
+                (phase, percent, amount)
+            )
+            conn.commit()
+            st.success("บันทึกข้อมูลเรียบร้อย ✅")
+            st.rerun()
+        else:
+            st.warning("กรุณากรอกข้อมูลงวดและจำนวนเงิน")
 
 # ----------------------
-# TABLE
+# HISTORY
 # ----------------------
-st.subheader("📋 รายการรับเงินทั้งหมด")
-df = pd.read_sql_query("SELECT phase, percent, amount FROM income", conn)
-st.dataframe(df, use_container_width=True)
+elif menu == "รายการย้อนหลัง":
+    st.title("📋 รายการรับเงินย้อนหลัง")
+
+    df = pd.read_sql_query(
+        "SELECT phase AS งวด, percent AS เปอร์เซ็นต์, amount AS จำนวนเงิน FROM income",
+        conn
+    )
+    st.dataframe(df, use_container_width=True)
