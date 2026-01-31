@@ -1,14 +1,15 @@
 import streamlit as st
 import sqlite3
 import pandas as pd
+from datetime import date
 
-# ----------------------
+# ======================
 # DATABASE
-# ----------------------
+# ======================
 conn = sqlite3.connect("finance.db", check_same_thread=False)
 c = conn.cursor()
 
-# Project table
+# --- PROJECT
 c.execute("""
 CREATE TABLE IF NOT EXISTS project (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -17,32 +18,58 @@ CREATE TABLE IF NOT EXISTS project (
 )
 """)
 
-# Income table (รุ่นใหม่)
+# --- INCOME
 c.execute("""
 CREATE TABLE IF NOT EXISTS income (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id INTEGER,
     phase TEXT,
     percent INTEGER,
-    amount INTEGER
+    amount INTEGER,
+    receive_date TEXT
 )
 """)
+
+# --- EXPENSE
+c.execute("""
+CREATE TABLE IF NOT EXISTS expense (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER,
+    category TEXT,          -- Labor / Material / Other
+    description TEXT,
+    amount INTEGER,
+    expense_date TEXT
+)
+""")
+
+# --- TIME ATTENDANCE (IMPORT ONLY)
+c.execute("""
+CREATE TABLE IF NOT EXISTS attendance (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER,
+    worker_name TEXT,
+    work_date TEXT,
+    time_in TEXT,
+    time_out TEXT
+)
+""")
+
+# --- DOCUMENT
+c.execute("""
+CREATE TABLE IF NOT EXISTS document (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER,
+    expense_id INTEGER,
+    filename TEXT,
+    upload_date TEXT
+)
+""")
+
 conn.commit()
 
-# ----------------------
-# MIGRATION (สำคัญมาก)
-# เพิ่ม project_id ถ้า income เก่ามีแต่ยังไม่มี
-# ----------------------
-c.execute("PRAGMA table_info(income)")
-columns = [col[1] for col in c.fetchall()]
-
-if "project_id" not in columns:
-    c.execute("ALTER TABLE income ADD COLUMN project_id INTEGER")
-    conn.commit()
-
-# ----------------------
-# INIT DEFAULT PROJECT
-# ----------------------
+# ======================
+# INIT PROJECT (ถ้ายังไม่มี)
+# ======================
 c.execute("SELECT COUNT(*) FROM project")
 if c.fetchone()[0] == 0:
     c.execute(
@@ -51,150 +78,138 @@ if c.fetchone()[0] == 0:
     )
     conn.commit()
 
-# ดึง project ปัจจุบัน (ตอนนี้มีแค่อันเดียว)
-c.execute("SELECT id, name, contract_value FROM project LIMIT 1")
-project = c.fetchone()
-PROJECT_ID = project[0]
-PROJECT_NAME = project[1]
-CONTRACT_VALUE = project[2]
-
-# ----------------------
-# FIX DATA เก่า (ถ้า project_id ว่าง)
-# ----------------------
-c.execute(
-    "UPDATE income SET project_id = ? WHERE project_id IS NULL",
-    (PROJECT_ID,)
-)
-conn.commit()
-
-# ----------------------
+# ======================
 # PAGE CONFIG
-# ----------------------
-st.set_page_config(page_title="ระบบการเงินบริษัทก่อสร้าง", layout="wide")
+# ======================
+st.set_page_config(page_title="Construction Finance System", layout="wide")
 
-# ----------------------
+# ======================
 # LOGIN
-# ----------------------
+# ======================
 if "login" not in st.session_state:
     st.session_state.login = False
 
-def login_page():
-    st.title("🔐 เข้าสู่ระบบ")
-    user = st.text_input("Username")
-    pw = st.text_input("Password", type="password")
-
+if not st.session_state.login:
+    st.title("🔐 Login")
+    u = st.text_input("Username")
+    p = st.text_input("Password", type="password")
     if st.button("Login"):
-        if user == "ncon2559" and pw == "1234":
+        if u == "ncon2559" and p == "1234":
             st.session_state.login = True
             st.rerun()
         else:
-            st.error("ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง")
-
-if not st.session_state.login:
-    login_page()
+            st.error("Login ไม่ถูกต้อง")
     st.stop()
 
-# ----------------------
-# SIDEBAR
-# ----------------------
-st.sidebar.title("📁 เมนูระบบ")
+# ======================
+# PROJECT SELECT
+# ======================
+projects = pd.read_sql_query("SELECT * FROM project", conn)
+project_name = st.sidebar.selectbox(
+    "📌 เลือกโครงการ",
+    projects["name"]
+)
+PROJECT_ID = projects[projects["name"] == project_name]["id"].iloc[0]
+CONTRACT_VALUE = projects[projects["name"] == project_name]["contract_value"].iloc[0]
+
+# ======================
+# SIDEBAR MENU
+# ======================
 menu = st.sidebar.radio(
-    "เลือกเมนู",
-    ["Dashboard", "บันทึกรับเงิน", "รายการย้อนหลัง / แก้ไข"]
+    "📁 เมนู",
+    [
+        "Overview",
+        "Income",
+        "Expense (Labor)",
+        "Expense (Other)",
+        "Time Attendance",
+        "Documents"
+    ]
 )
 
-st.sidebar.divider()
-st.sidebar.write(f"📌 โครงการ: {PROJECT_NAME}")
-st.sidebar.write("👤 ผู้ใช้: ncon2559")
+# ======================
+# OVERVIEW
+# ======================
+if menu == "Overview":
+    st.title("📊 ภาพรวมโครงการ")
 
-if st.sidebar.button("ออกจากระบบ"):
-    st.session_state.login = False
-    st.rerun()
+    income = pd.read_sql_query(
+        "SELECT SUM(amount) as total FROM income WHERE project_id=?",
+        conn, params=(PROJECT_ID,)
+    )["total"].iloc[0] or 0
 
-# ----------------------
-# SUMMARY
-# ----------------------
-c.execute(
-    "SELECT SUM(amount) FROM income WHERE project_id = ?",
-    (PROJECT_ID,)
-)
-received = c.fetchone()[0]
-received = received if received else 0
+    expense = pd.read_sql_query(
+        "SELECT SUM(amount) as total FROM expense WHERE project_id=?",
+        conn, params=(PROJECT_ID,)
+    )["total"].iloc[0] or 0
 
-# ----------------------
-# DASHBOARD
-# ----------------------
-if menu == "Dashboard":
-    st.title("📊 Dashboard การเงิน")
-    st.success("เข้าสู่ระบบสำเร็จ ✅")
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("มูลค่าสัญญา", f"{CONTRACT_VALUE:,.0f}")
+    col2.metric("รับเงินแล้ว", f"{income:,.0f}")
+    col3.metric("ค่าใช้จ่าย", f"{expense:,.0f}")
+    col4.metric("กำไร / ขาดทุน", f"{income - expense:,.0f}")
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("มูลค่าสัญญา", f"{CONTRACT_VALUE:,.0f} บาท")
-    col2.metric("รับเงินแล้ว", f"{received:,.0f} บาท")
-    col3.metric("คงเหลือ", f"{CONTRACT_VALUE - received:,.0f} บาท")
+# ======================
+# EXPENSE - LABOR (SUMMARY)
+# ======================
+elif menu == "Expense (Labor)":
+    st.title("👷 ค่าแรง (สรุป)")
 
-    st.write(f"โครงการ: **{PROJECT_NAME}**")
+    desc = st.text_input("งวด / เดือน (เช่น มี.ค. 2569)")
+    amount = st.number_input("ค่าแรงรวม", step=1000)
+    d = st.date_input("วันที่จ่าย", date.today())
 
-# ----------------------
-# ADD INCOME
-# ----------------------
-elif menu == "บันทึกรับเงิน":
-    st.title("➕ บันทึกรับเงินงวดงาน")
-
-    phase = st.text_input("งวดงาน (เช่น งวดที่ 1)")
-    percent = st.number_input("เปอร์เซ็นต์ผลงาน", 0, 100)
-    amount = st.number_input("จำนวนเงิน (บาท)", step=1000)
-
-    if st.button("บันทึกข้อมูล"):
-        if phase and amount > 0:
-            c.execute(
-                """
-                INSERT INTO income (project_id, phase, percent, amount)
-                VALUES (?, ?, ?, ?)
-                """,
-                (PROJECT_ID, phase, percent, amount)
-            )
-            conn.commit()
-            st.success("บันทึกข้อมูลเรียบร้อย ✅")
-            st.rerun()
-        else:
-            st.warning("กรุณากรอกข้อมูลงวดและจำนวนเงิน")
-
-# ----------------------
-# HISTORY + EDIT
-# ----------------------
-elif menu == "รายการย้อนหลัง / แก้ไข":
-    st.title("📋 รายการรับเงินย้อนหลัง")
+    if st.button("บันทึกค่าแรง"):
+        c.execute(
+            """
+            INSERT INTO expense (project_id, category, description, amount, expense_date)
+            VALUES (?, 'Labor', ?, ?, ?)
+            """,
+            (PROJECT_ID, desc, amount, d.isoformat())
+        )
+        conn.commit()
+        st.success("บันทึกค่าแรงแล้ว ✅")
+        st.rerun()
 
     df = pd.read_sql_query(
-        "SELECT id, phase, percent, amount FROM income WHERE project_id = ?",
-        conn,
-        params=(PROJECT_ID,)
+        "SELECT * FROM expense WHERE project_id=? AND category='Labor'",
+        conn, params=(PROJECT_ID,)
     )
     st.dataframe(df, use_container_width=True)
 
-    st.divider()
-    st.subheader("✏️ แก้ไขรายการ")
+# ======================
+# TIME ATTENDANCE (IMPORT ONLY)
+# ======================
+elif menu == "Time Attendance":
+    st.title("🕒 เวลาเข้างาน (อ้างอิงจากเครื่องสแกนนิ้ว)")
+    st.info("หน้านี้ใช้เก็บข้อมูลเวลาเท่านั้น ยังไม่คำนวณเงิน")
 
-    if len(df) > 0:
-        edit_id = st.selectbox("เลือกรายการ (id)", df["id"])
-        row = df[df["id"] == edit_id].iloc[0]
+    uploaded = st.file_uploader("อัปโหลดไฟล์ Excel จากเครื่องสแกนนิ้ว", type=["xlsx", "csv"])
+    if uploaded:
+        df = pd.read_excel(uploaded)
+        st.dataframe(df.head())
+        st.success("อ่านไฟล์ได้ (รอบหน้าเราจะ map เข้าระบบให้เต็ม)")
 
-        new_phase = st.text_input("งวดงาน", row["phase"])
-        new_percent = st.number_input("เปอร์เซ็นต์", 0, 100, int(row["percent"]))
-        new_amount = st.number_input("จำนวนเงิน", step=1000, value=int(row["amount"]))
+# ======================
+# DOCUMENTS
+# ======================
+elif menu == "Documents":
+    st.title("📎 เอกสารโครงการ / ค่าแรง")
 
-        if st.button("บันทึกการแก้ไข"):
-            c.execute(
-                """
-                UPDATE income
-                SET phase = ?, percent = ?, amount = ?
-                WHERE id = ?
-                """,
-                (new_phase, new_percent, new_amount, edit_id)
-            )
-            conn.commit()
-            st.success("แก้ไขข้อมูลเรียบร้อย ✅")
-            st.rerun()
-    else:
-        st.info("ยังไม่มีข้อมูล")
+    file = st.file_uploader("อัปโหลดไฟล์", type=["pdf", "jpg", "png"])
+    if file:
+        c.execute(
+            """
+            INSERT INTO document (project_id, filename, upload_date)
+            VALUES (?, ?, ?)
+            """,
+            (PROJECT_ID, file.name, date.today().isoformat())
+        )
+        conn.commit()
+        st.success("บันทึกชื่อเอกสารแล้ว (ตัวไฟล์เก็บภายนอกได้ในอนาคต)")
+
+    docs = pd.read_sql_query(
+        "SELECT * FROM document WHERE project_id=?",
+        conn, params=(PROJECT_ID,)
+    )
+    st.dataframe(docs, use_container_width=True)
