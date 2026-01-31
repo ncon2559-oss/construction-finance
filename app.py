@@ -14,6 +14,7 @@ st.set_page_config(page_title="Construction Finance System", layout="wide")
 conn = sqlite3.connect("finance.db", check_same_thread=False)
 c = conn.cursor()
 
+# ----- TABLES -----
 c.execute("""
 CREATE TABLE IF NOT EXISTS project(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -66,6 +67,12 @@ CREATE TABLE IF NOT EXISTS attendance(
 )
 """)
 
+# ----- DB MIGRATION (กันพัง) -----
+c.execute("PRAGMA table_info(project)")
+cols = [col[1] for col in c.fetchall()]
+if "active" not in cols:
+    c.execute("ALTER TABLE project ADD COLUMN active INTEGER DEFAULT 1")
+
 conn.commit()
 
 # ======================
@@ -111,12 +118,9 @@ if projects.empty:
     st.info("ยังไม่มีโครงการที่เปิดใช้งาน")
     st.stop()
 
-project_name = st.sidebar.selectbox(
-    "เลือกโครงการ",
-    projects["name"]
-)
-
+project_name = st.sidebar.selectbox("เลือกโครงการ", projects["name"])
 project = projects[projects["name"] == project_name].iloc[0]
+
 PID = int(project["id"])
 CONTRACT = int(project["contract"])
 
@@ -256,8 +260,8 @@ elif menu == "Attendance":
     with st.form("add_att"):
         worker = st.text_input("ชื่อคนงาน")
         work_date = st.date_input("วันที่", date.today())
-        time_in = st.text_input("เวลาเข้า")
-        time_out = st.text_input("เวลาออก")
+        time_in = st.text_input("เวลาเข้า (เช่น 08:00)")
+        time_out = st.text_input("เวลาออก (เช่น 17:00)")
         if st.form_submit_button("บันทึก"):
             c.execute(
                 """INSERT INTO attendance
