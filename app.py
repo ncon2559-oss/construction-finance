@@ -176,5 +176,31 @@ elif menu == "Documents":
 # ATTENDANCE
 # ======================
 elif menu == "Attendance":
-    st.title("🕒 Attendance (Import)")
-    up = st.file_uploa_
+    st.title("🕒 Attendance (ลงเวลา / เครื่องสแกนนิ้ว)")
+
+    st.subheader("➕ เพิ่มข้อมูลเข้า–ออกงาน")
+    with st.form("add_att"):
+        worker = st.text_input("ชื่อคนงาน")
+        work_date = st.date_input("วันที่ทำงาน", date.today())
+        time_in = st.text_input("เวลาเข้า (เช่น 08:00)")
+        time_out = st.text_input("เวลาออก (เช่น 17:00)")
+        if st.form_submit_button("บันทึก"):
+            c.execute(
+                """INSERT INTO attendance
+                   (project_id, worker, work_date, time_in, time_out)
+                   VALUES (?,?,?,?,?)""",
+                (PID, worker, work_date.isoformat(), time_in, time_out)
+            )
+            conn.commit()
+            st.success("บันทึกเวลาแล้ว")
+            st.rerun()
+
+    st.subheader("📋 รายการลงเวลา")
+    df = pd.read_sql_query(
+        """SELECT worker, work_date, time_in, time_out
+           FROM attendance
+           WHERE project_id=?""",
+        conn,
+        params=(PID,)
+    )
+    st.dataframe(df, use_container_width=True)
