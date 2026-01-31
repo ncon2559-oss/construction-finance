@@ -1,259 +1,169 @@
 import streamlit as st
-import sqlite3
 import pandas as pd
-from datetime import date
+import sqlite3
+from datetime import datetime, time
 
-# ======================
+# =====================
 # CONFIG
-# ======================
-st.set_page_config(page_title="Construction Finance System", layout="wide")
+# =====================
+st.set_page_config(page_title="Construction Payroll", layout="wide")
 
-# ======================
+# =====================
 # DATABASE
-# ======================
+# =====================
 conn = sqlite3.connect("finance.db", check_same_thread=False)
 c = conn.cursor()
 
 c.execute("""
-CREATE TABLE IF NOT EXISTS project(
+CREATE TABLE IF NOT EXISTS employee(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    emp_code TEXT,
     name TEXT,
-    contract INTEGER,
-    active INTEGER DEFAULT 1
+    daily_salary INTEGER
 )
 """)
 
 c.execute("""
-CREATE TABLE IF NOT EXISTS income(
+CREATE TABLE IF NOT EXISTS attendance(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    project_id INTEGER,
-    phase TEXT,
-    percent REAL,
-    amount INTEGER,
-    status TEXT,
-    receive_date TEXT
+    emp_id INTEGER,
+    work_date TEXT,
+    time_in TEXT,
+    late_min INTEGER,
+    FOREIGN KEY(emp_id) REFERENCES employee(id)
 )
 """)
 
 c.execute("""
-CREATE TABLE IF NOT EXISTS expense(
+CREATE TABLE IF NOT EXISTS payroll(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    project_id INTEGER,
-    category TEXT,
-    description TEXT,
-    amount INTEGER,
-    expense_date TEXT
+    emp_id INTEGER,
+    work_days INTEGER,
+    late_deduct INTEGER,
+    total_salary INTEGER,
+    FOREIGN KEY(emp_id) REFERENCES employee(id)
 )
 """)
 
 conn.commit()
 
-# ======================
-# AUTH
-# ======================
-if "login" not in st.session_state:
-    st.session_state.login = False
+# =====================
+# HELPER FUNCTIONS
+# =====================
+def parse_time(t):
+    try:
+        return datetime.strptime(t, "%H:%M").time()
+    except:
+        return None
 
-if not st.session_state.login:
-    st.title("🔐 Login")
-    u = st.text_input("Username")
-    p = st.text_input("Password", type="password")
-    if st.button("Login"):
-        if u == "ncon2559" and p == "1234":
-            st.session_state.login = True
-            st.rerun()
-        else:
-            st.error("Login ไม่ถูกต้อง")
-    st.stop()
+def calc_late_minutes(t_in):
+    if not t_in:
+        return 0
+    start = time(8, 0)
+    if t_in <= start:
+        return 0
+    return int(
+        (datetime.combine(datetime.today(), t_in) -
+         datetime.combine(datetime.today(), start)).seconds / 60
+    )
 
-# ======================
-# PROJECT MANAGER
-# ======================
-st.sidebar.header("📁 โครงการ")
+# =====================
+# UI
+# =====================
+st.title("👷 ระบบค่าแรงจากเครื่องแสกนนิ้ว")
 
-projects = pd.read_sql_query(
-    "SELECT * FROM project WHERE active=1",
-    conn
-)
+file = st.file_uploader("📤 อัปโหลดไฟล์ Attendance (.xlsx)", type=["xlsx"])
 
-with st.sidebar.expander("➕ เพิ่มโครงการ"):
-    name = st.text_input("ชื่อโครงการ")
-    contract = st.number_input("มูลค่าสัญญา", step=100000)
-    if st.button("เพิ่มโครงการ"):
-        if name and contract > 0:
-            c.execute(
-                "INSERT INTO project(name, contract) VALUES (?,?)",
-                (name, contract)
+if file:
+    raw = pd.read_excel(file, header=None)
+
+    results = []
+
+    i = 0
+    while i < len(raw):
+        row = str(raw.iloc[i, 0])
+
+        # ===== เจอหัวพนักงาน =====
+        if row.startswith("ID:"):
+            emp_code = row.split("ID:")[1].split()[0]
+            name = row.split("Name:")[1].split("Department")[0].strip()
+
+            salary_row = raw.iloc[i+1, 0]
+            daily_salary = int(
+                str(salary_row).split("Daily Salary:")[1].split()[0]
             )
-            conn.commit()
-            st.rerun()
 
-if projects.empty:
-    st.info("ยังไม่มีโครงการ")
-    st.stop()
+            # upsert employee
+            c.execute("SELECT id FROM employee WHERE emp_code=?", (emp_code,))
+            emp = c.fetchone()
+            if emp:
+                emp_id = emp[0]
+            else:
+                c.execute(
+                    "INSERT INTO employee(emp_code,name,daily_salary) VALUES(?,?,?)",
+                    (emp_code, name, daily_salary)
+                )
+                emp_id = c.lastrowid
 
-project_name = st.sidebar.selectbox(
-    "เลือกโครงการ",
-    projects["name"]
-)
+            # ===== ตารางเข้างาน =====
+            work_days = 0
+            late_total = 0
 
-project = projects[projects["name"] == project_name].iloc[0]
-PID = int(project["id"])
-CONTRACT = int(project["contract"])
+            j = i + 4
+            while j < len(raw) and not str(raw.iloc[j, 0]).startswith("ID:"):
+                date_val = raw.iloc[j, 0]
+                time_in = raw.iloc[j, 2]
 
-if st.sidebar.button("🚫 ปิดโครงการนี้"):
-    c.execute(
-        "UPDATE project SET active=0 WHERE id=?",
-        (PID,)
-    )
-    conn.commit()
-    st.sidebar.success("ปิดโครงการแล้ว")
-    st.rerun()
+                if pd.notna(time_in):
+                    work_days += 1
+                    t_in = parse_time(str(time_in))
+                    late = calc_late_minutes(t_in)
+                    late_total += late
 
-menu = st.sidebar.radio(
-    "เมนู",
-    ["Dashboard", "Income", "Expense", "Attendance"]
-)
+                    c.execute("""
+                        INSERT INTO attendance(emp_id,work_date,time_in,late_min)
+                        VALUES(?,?,?,?)
+                    """, (emp_id, str(date_val), str(time_in), late))
 
-# ======================
-# DASHBOARD
-# ======================
-if menu == "Dashboard":
-    st.title("📊 Dashboard")
+                j += 1
 
-    inc = pd.read_sql_query(
-        "SELECT SUM(amount) t FROM income WHERE project_id=? AND status='รับเงินแล้ว'",
-        conn,
-        params=(PID,)
-    )["t"].iloc[0] or 0
+            total_salary = work_days * daily_salary - late_total
 
-    exp = pd.read_sql_query(
-        "SELECT SUM(amount) t FROM expense WHERE project_id=?",
-        conn,
-        params=(PID,)
-    )["t"].iloc[0] or 0
-
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("มูลค่าสัญญา", f"{CONTRACT:,.0f}")
-    col2.metric("รับเงินแล้ว", f"{inc:,.0f}")
-    col3.metric("ค่าใช้จ่าย", f"{exp:,.0f}")
-    col4.metric("คงเหลือ", f"{CONTRACT - inc:,.0f}")
-
-# ======================
-# INCOME
-# ======================
-elif menu == "Income":
-    st.title("💰 Income (งวดงาน)")
-
-    with st.form("add_income"):
-        phase = st.text_input("งวด")
-        percent = st.number_input("% ของสัญญา", 0.0, 100.0)
-        status = st.selectbox("สถานะ", ["ยังไม่ถึง", "เบิกได้", "รับเงินแล้ว"])
-        rdate = st.date_input("วันที่รับเงิน", date.today())
-        if st.form_submit_button("บันทึก"):
-            amount = int(CONTRACT * percent / 100)
             c.execute("""
-                INSERT INTO income(project_id, phase, percent, amount, status, receive_date)
-                VALUES (?,?,?,?,?,?)
-            """, (PID, phase, percent, amount, status, rdate.isoformat()))
-            conn.commit()
-            st.rerun()
+                INSERT INTO payroll(emp_id,work_days,late_deduct,total_salary)
+                VALUES(?,?,?,?)
+            """, (emp_id, work_days, late_total, total_salary))
 
-    df = pd.read_sql_query(
-        "SELECT phase,percent,amount,status,receive_date FROM income WHERE project_id=?",
-        conn,
-        params=(PID,)
-    )
-    st.dataframe(df, use_container_width=True)
-
-# ======================
-# EXPENSE
-# ======================
-elif menu == "Expense":
-    st.title("📉 Expense")
-
-    with st.form("add_exp"):
-        cat = st.selectbox("หมวด", ["Labor", "Material", "Other"])
-        desc = st.text_input("รายละเอียด")
-        amt = st.number_input("จำนวนเงิน", step=1000)
-        d = st.date_input("วันที่", date.today())
-        if st.form_submit_button("บันทึก"):
-            c.execute("""
-                INSERT INTO expense(project_id, category, description, amount, expense_date)
-                VALUES (?,?,?,?,?)
-            """, (PID, cat, desc, amt, d.isoformat()))
-            conn.commit()
-            st.rerun()
-
-    df = pd.read_sql_query(
-        "SELECT category,description,amount,expense_date FROM expense WHERE project_id=?",
-        conn,
-        params=(PID,)
-    )
-    st.dataframe(df, use_container_width=True)
-
-# ======================
-# ATTENDANCE IMPORT
-# ======================
-elif menu == "Attendance":
-    st.title("🕒 Attendance Import (คิดค่าแรงอัตโนมัติ)")
-
-    daily_salary = st.number_input(
-        "ค่าแรงต่อวันต่อคน (บาท)",
-        min_value=0,
-        step=50
-    )
-
-    file = st.file_uploader(
-        "อัปโหลดไฟล์ Excel จากเครื่องสแกนนิ้ว",
-        type=["xlsx", "xls"]
-    )
-
-    if file and daily_salary > 0:
-        df = pd.read_excel(file)
-        df.columns = [c.strip() for c in df.columns]
-
-        required = ["ID", "Name", "Date", "In"]
-        missing = [c for c in required if c not in df.columns]
-        if missing:
-            st.error(f"ไฟล์ขาดคอลัมน์: {missing}")
-            st.stop()
-
-        df = df[df["Name"].notna()]
-
-        st.subheader("👷 พบพนักงานในไฟล์")
-        st.dataframe(df[["ID", "Name"]].drop_duplicates())
-
-        def is_workday(row):
-            return pd.notna(row["In"])
-
-        summary = []
-        for name, g in df.groupby("Name"):
-            days = g.apply(is_workday, axis=1).sum()
-            wage = int(days * daily_salary)
-            summary.append({
+            results.append({
                 "ชื่อ": name,
-                "วันทำงาน": int(days),
-                "ค่าแรง": wage
+                "วันทำงาน": work_days,
+                "หักสาย (บาท)": late_total,
+                "ค่าแรงรวม": total_salary
             })
 
-        summary_df = pd.DataFrame(summary)
-        st.subheader("📋 สรุปค่าแรงรายคน")
-        st.dataframe(summary_df, use_container_width=True)
+            i = j
+        else:
+            i += 1
 
-        total = summary_df["ค่าแรง"].sum()
-        st.metric("💰 ค่าแรงรวมทั้งหมด", f"{total:,.0f} บาท")
+    conn.commit()
 
-        if st.button("📥 บันทึกค่าแรงเข้าโครงการ"):
-            c.execute("""
-                INSERT INTO expense(project_id, category, description, amount, expense_date)
-                VALUES (?,?,?,?,?)
-            """, (
-                PID,
-                "Labor",
-                f"ค่าแรงจาก attendance ({len(summary_df)} คน)",
-                int(total),
-                date.today().isoformat()
-            ))
-            conn.commit()
-            st.success("บันทึกค่าแรงเรียบร้อย ✅")
+    st.success("✅ ประมวลผลเรียบร้อย")
+    st.dataframe(pd.DataFrame(results), use_container_width=True)
+
+# =====================
+# VIEW EMPLOYEE
+# =====================
+st.divider()
+st.header("📊 สถิติพนักงาน")
+
+df = pd.read_sql_query("""
+SELECT e.name,
+       p.work_days,
+       p.late_deduct,
+       p.total_salary
+FROM payroll p
+JOIN employee e ON p.emp_id=e.id
+ORDER BY p.id DESC
+""", conn)
+
+st.dataframe(df, use_container_width=True)
